@@ -52,7 +52,10 @@ static int goal(float x, float y) {
 static bool out(float x, float y) {
     // TODO 2: implement this function
         // You must check for and print this EXACT log:
-        // printf("Ball is out: x=%.2f, y=%.2f\n", x, y);
+        if((x+BALL_RADIUS < PITCH_X)||(x-BALL_RADIUS > PITCH_W+PITCH_X)||(y+BALL_RADIUS < PITCH_Y)||(y-BALL_RADIUS > PITCH_Y+PITCH_H)){
+            printf("Ball is out: x=%.2f, y=%.2f\n", x, y);
+            return true;
+        }
     
     return false; // for now
 }
