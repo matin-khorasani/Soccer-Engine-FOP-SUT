@@ -26,9 +26,14 @@
 static int goal(float x, float y) {
     // TODO 1: implement this function
         // You must check for and print these EXACT logs:
-        // printf("GOAL! Right net hit at x:%.2f, y=%.2f\n", x, y);
-        // printf("GOAL! Left net hit at x:%.2f, y=%.2f\n", x, y);
-
+        if(((x-BALL_RADIUS)>PITCH_X+PITCH_W)&&(y<CENTER_Y+GOAL_HEIGHT/2)&&(y>CENTER_Y-GOAL_HEIGHT/2)){
+            printf("GOAL! Right net hit at x:%.2f, y=%.2f\n", x, y);
+            return 1;
+        }
+        else if(((x+BALL_RADIUS)<PITCH_X)&&(y<CENTER_Y+GOAL_HEIGHT/2)&&(y>CENTER_Y-GOAL_HEIGHT/2)){
+            printf("GOAL! Left net hit at x:%.2f, y=%.2f\n", x, y);
+            return 2;
+        }
     return 0; // for now
 }
 
