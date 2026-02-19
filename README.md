@@ -65,7 +65,7 @@ Once the rules are enforced, it’s time to make the players "smart." You will w
 
 ## 🤝 Contributing
 
-This is an educational project. Feel free to fork it, implement your own AI strategies, and open a Pull Request if you find bugs in the core engine!
+This is an educational project provided by [me](https://github.com/MatinB02) and [Mani Ebrahimi](https://github.com/maniebra). Feel free to fork it, implement your own AI strategies, and open a Pull Request if you find bugs in the core engine!
 
 ---
 
