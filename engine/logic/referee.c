@@ -117,11 +117,15 @@ int referee(struct Scene* scene) {
  */
 void verify_talents(struct Talents talents) {
     // TODO 4: implement this function
-        // You must check for and print this EXACT error:    
-            // printf("ERROR: Invalid talents! Values: defence=%d, agility=%d, dribbling=%d, shooting=%d, sum=%d\n",
-            //    talents.defence, talents.agility, talents.dribbling, talents.shooting, sum);
+        // You must check for and print this EXACT error:  
+        int sum = talents.defence+talents.agility+talents.dribbling+talents.shooting; 
+        if((talents.defence > MAX_TALENT_PER_SKILL) || (talents.agility>MAX_TALENT_PER_SKILL) || (talents.dribbling>MAX_TALENT_PER_SKILL) || (talents.shooting>MAX_TALENT_PER_SKILL)
+        || (talents.defence < 1) || (talents.agility < 1) || (talents.dribbling < 1) || (talents.shooting < 1)
+        || sum > MAX_TALENT_PER_PLAYER){
+            printf("ERROR: Invalid talents! Values: defence=%d, agility=%d, dribbling=%d, shooting=%d, sum=%d\n",
+            talents.defence, talents.agility, talents.dribbling, talents.shooting, sum);
+        } 
 }
-
 
 /**
  * @brief Verifies the correctness of a player's current state.
