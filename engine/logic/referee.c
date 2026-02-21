@@ -85,7 +85,18 @@ static bool out(float x, float y) {
 int referee(struct Scene* scene) {
 
     // TODO 3: implement this function
-
+    int score = goal(scene->ball->position.x, scene->ball->position.y);
+    if(score == 1){
+        scene->first_team->score++;
+        return GOAL;
+    }
+    if(score == 2){
+        scene->second_team->score++;
+        return GOAL;
+    }
+    if(out(scene->ball->position.x, scene->ball->position.y)){
+        return OUT;
+    }
     return PLAY_ON;   // for now
 }
 
