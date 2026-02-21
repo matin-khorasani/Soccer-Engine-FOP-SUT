@@ -145,8 +145,11 @@ void verify_state(struct Player *player, struct Scene *scene) {
 
     // TODO 5: implement this function
         // You must check for and print this EXACT error:
-        // printf(" ERROR: the ball is not yours, you can't shoot! (team %d, player %d)\n",
-        //         player->team, player->kit);
+        if((player.state == SHOOTING)&&(scene->ball->possessor != player)){
+            printf(" ERROR: the ball is not yours, you can't shoot! (team %d, player %d)\n",
+            player->team, player->kit);
+            player->state = IDLE;
+        }
 }
 
 /**
