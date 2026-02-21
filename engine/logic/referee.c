@@ -145,7 +145,7 @@ void verify_state(struct Player *player, struct Scene *scene) {
 
     // TODO 5: implement this function
         // You must check for and print this EXACT error:
-        if((player.state == SHOOTING)&&(scene->ball->possessor != player)){
+        if((player->state == SHOOTING)&&(scene->ball->possessor != player)){
             printf(" ERROR: the ball is not yours, you can't shoot! (team %d, player %d)\n",
             player->team, player->kit);
             player->state = IDLE;
@@ -207,7 +207,33 @@ void verify_shoot(struct Ball *ball, bool kickoff) {
 
     // TODO 7: implement this function
         // You must check for and print these EXACT errors:
-        // printf(" ERROR: Demanding to shoot too fast in dimension x! (team %d, player %d)\n", player->team, player->kit);
-        // printf(" ERROR: Demanding to shoot too fast in dimension y! (team %d, player %d)\n", player->team, player->kit);
-        // printf(" ERROR: You must pass to your own half! (team %d, player %d)\n", player->team, player->kit);
+        float max_ball_speed = ball->possessor->talents.shooting * 15;
+        if(ball->velocity.x > max_ball_speed){
+            printf(" ERROR: Demanding to shoot too fast in dimension x! (team %d, player %d)\n", ball->possessor->team, ball->possessor->kit);
+            ball->velocity.x = max_ball_speed;
+        }
+        if(ball->velocity.x < -max_ball_speed){
+            printf(" ERROR: Demanding to shoot too fast in dimension x! (team %d, player %d)\n", ball->possessor->team, ball->possessor->kit);
+            ball->velocity.x = -max_ball_speed;
+        }
+        if(ball->velocity.y > max_ball_speed){
+            printf(" ERROR: Demanding to shoot too fast in dimension y! (team %d, player %d)\n", ball->possessor->team, ball->possessor->kit);
+            ball->velocity.y = max_ball_speed;
+        }
+        if(ball->velocity.y < -max_ball_speed){
+            printf(" ERROR: Demanding to shoot too fast in dimension y! (team %d, player %d)\n", ball->possessor->team, ball->possessor->kit);
+            ball->velocity.y = -max_ball_speed;
+        }
+        if(kickoff == true){
+            if((ball->possessor->team == 1)&&(ball->velocity.x > 0)){
+                printf(" ERROR: You must pass to your own half! (team %d, player %d)\n", ball->possessor->team, ball->possessor->kit);
+                ball->velocity.x = 0;
+            }
+            if((ball->possessor->team == 2)&&(ball->velocity.x < 0)){
+                printf(" ERROR: You must pass to your own half! (team %d, player %d)\n", ball->possessor->team, ball->possessor->kit);
+                ball->velocity.x = 0;
+            }
+        }
+
+        
 }
