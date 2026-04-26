@@ -11,7 +11,7 @@
 
 // Set to false to let the other team use their own logic (if you implement it)
 // Set to true to test your logic on both teams
-bool coach_both_teams = true;
+bool coach_both_teams = false;
 
 /* -------------------------------------------------------------------------
  * Logic Functions
@@ -38,840 +38,487 @@ bool coach_both_teams = true;
  * NOTE: Directly modifying any other attributes will be flagged as a violation.
  * Thank you for your attention to this matter!
  * ------------------------------------------------------------------------- */
+void move_to_home(struct Player *self) {
+    struct Vec2 home = get_positions(self->team, self->kit);
+    float dx = home.x - self->position.x;
+    float dy = home.y - self->position.y;
+    float dist = sqrt(dx * dx + dy * dy);
+    if (dist > 5.0f) { 
+        self->velocity.x = (dx / dist) * self->talents.agility * 10;
+        self->velocity.y = (dy / dist) * self->talents.agility * 10;
+    }
+    else {
+        self->velocity.x = 0;
+        self->velocity.y = 0;
+    }
+}
+bool is_closest_teammate(struct Player *self, struct Scene *scene) {
+    struct Team *my_team = (self->team == 1) ? scene->first_team : scene->second_team;
+    float my_dx = scene->ball->position.x - self->position.x;
+    float my_dy = scene->ball->position.y - self->position.y;
+    float my_dist = sqrt(my_dx * my_dx + my_dy * my_dy);
+    for (int i = 0; i < PLAYER_COUNT; i++) {
+        struct Player *teammate = my_team->players[i];
+        if (!teammate || teammate == self) continue;
+        float t_dx = scene->ball->position.x - teammate->position.x;
+        float t_dy = scene->ball->position.y - teammate->position.y;
+        float t_dist = sqrt(t_dx * t_dx + t_dy * t_dy);
+        if (t_dist < my_dist) return false;
+        if (t_dist == my_dist && teammate->kit < self->kit) return false;
+    }
+    return true;
+}
+bool handle_out_and_restarts(struct Player *self, struct Scene *scene) {
+    if (scene->state != STATE_OUT && scene->state != STATE_RESTARTING) {
+        return false;
+    }
+    struct Player *kicker = scene->ball->possessor;
+    if (kicker == NULL) {
+        if (is_closest_teammate(self, scene)) {
+            kicker = self;
+        }
+    }
+    if (self == kicker) {
+        self->velocity.x = 0;
+        self->velocity.y = 0;
+    } 
+    else if (kicker != NULL && self->team != kicker->team) {
+        move_to_home(self);
+    } 
+    else {
+        move_to_home(self);
+    }
+    return true;
+}
 
+void smart_goalkeeper_move(struct Player *self, struct Scene *scene) {
+    if (handle_out_and_restarts(self, scene)) {
+        return; 
+    } 
+    float ball_x = scene->ball->position.x;
+    float ball_y = scene->ball->position.y;
+    struct Vec2 home = get_positions(self->team, self->kit);
+    float target_x = home.x;
+    float target_y = ball_y;
+    float goal_top = CENTER_Y - (GOAL_HEIGHT / 2.5f);
+    float goal_bottom = CENTER_Y + (GOAL_HEIGHT / 2.5f);
+    if (target_y < goal_top) target_y = goal_top;
+    if (target_y > goal_bottom) target_y = goal_bottom;
+    float dx = ball_x - self->position.x;
+    float dy = ball_y - self->position.y;
+    float dist = sqrt(dx*dx + dy*dy);
+    if (dist < 80.0f) {
+        target_x = ball_x;
+        target_y = ball_y;
+    }
+    float move_dx = target_x - self->position.x;
+    float move_dy = target_y - self->position.y;
+    float move_dist = sqrt(move_dx*move_dx + move_dy*move_dy);
+    if (move_dist > 1.0f) {
+        self->velocity.x = (move_dx / move_dist) * self->talents.agility * 10;
+        self->velocity.y = (move_dy / move_dist) * self->talents.agility * 10;
+    } else {
+        self->velocity.x = 0;
+        self->velocity.y = 0;
+    }
+}
+void smart_shoot(struct Player *self, struct Scene *scene, int role) {
+    float max_power = self->talents.shooting * 35.0f; 
+
+    int is_kickoff = (self->kit == 0 && 
+                      fabs(scene->ball->position.x - CENTER_X) < 10.0f && 
+                      fabs(scene->ball->position.y - CENTER_Y) < 10.0f &&
+                      fabs(scene->ball->velocity.x) < 1.0f && 
+                      fabs(scene->ball->velocity.y) < 1.0f);
+
+    if (role == 3) {
+        float target_x = CENTER_X; 
+        float target_y = (scene->ball->position.y > CENTER_Y) ? (PITCH_Y - 50.0f) : (PITCH_Y + PITCH_H + 50.0f);
+        float dx = target_x - scene->ball->position.x;
+        float dy = target_y - scene->ball->position.y;
+        float d = sqrt(dx*dx + dy*dy);
+        scene->ball->velocity.x = (dx / d) * max_power;
+        scene->ball->velocity.y = (dy / d) * max_power;
+        return; 
+    }
+
+    struct Player *best_teammate = NULL;
+    float best_distance = 1000.0f;
+    int has_target = 0;
+    struct Team *my_team = (self->team == 1) ? scene->first_team : scene->second_team;
+
+    for(int i = 0; i < PLAYER_COUNT; i++) {
+        struct Player *teammate = my_team->players[i];
+        if(teammate == self || !teammate) continue;
+
+        int valid = 0;
+        if(is_kickoff) {
+            valid = (self->team == 1) ? (teammate->position.x < self->position.x) : (teammate->position.x > self->position.x);
+        }
+        else {
+            valid = (self->team == 1) ? (teammate->position.x > self->position.x) : (teammate->position.x < self->position.x);
+        }
+
+        if(valid) {
+            float dx = teammate->position.x - scene->ball->position.x;
+            float dy = teammate->position.y - scene->ball->position.y;
+            float distance = sqrt(dx*dx + dy*dy);
+            if(distance < best_distance) {
+                best_distance = distance;
+                best_teammate = teammate;
+                has_target = 1;
+            }
+        }
+    }
+
+    if(has_target) {
+        float dx = best_teammate->position.x - scene->ball->position.x;
+        float dy = best_teammate->position.y - scene->ball->position.y;
+        scene->ball->velocity.x = (dx / best_distance) * max_power;
+        scene->ball->velocity.y = (dy / best_distance) * max_power;
+    }
+    else {
+        float target_x = (self->team == 1) ? PITCH_X + PITCH_W : PITCH_X;
+        if (is_kickoff) target_x = (self->team == 1) ? PITCH_X : PITCH_X + PITCH_W;
+        
+        float target_y = (scene->ball->position.y > CENTER_Y) ? CENTER_Y - 25.0f : CENTER_Y + 25.0f;
+        float dx = target_x - scene->ball->position.x;
+        float dy = target_y - scene->ball->position.y;
+        float d = sqrt(dx*dx + dy*dy);
+        
+        float dist_to_goal = fabs(target_x - scene->ball->position.x);
+        int under_pressure = 0;
+        struct Team *enemy_team = (self->team == 1) ? scene->second_team : scene->first_team;
+        for (int i = 0; i < PLAYER_COUNT; i++) {
+            struct Player *enemy = enemy_team->players[i];
+            if (!enemy || enemy->state == IDLE) continue;
+            float edx = enemy->position.x - self->position.x;
+            float edy = enemy->position.y - self->position.y;
+            if (sqrt(edx*edx + edy*edy) < 100.0f) { 
+                under_pressure = 1;
+                break;
+            }
+        }
+
+        if (is_kickoff) {
+            scene->ball->velocity.x = (dx / d) * max_power;
+            scene->ball->velocity.y = (dy / d) * max_power;
+        } 
+        else if (dist_to_goal < 300.0f || under_pressure) {
+            scene->ball->velocity.x = (dx / d) * max_power;
+            scene->ball->velocity.y = (dy / d) * max_power;
+        } 
+        else {
+            float player_speed = self->talents.agility * 10.0f;
+            scene->ball->velocity.x = (dx / d) * (player_speed * 1.05f);
+            scene->ball->velocity.y = (dy / d) * (player_speed * 1.05f);
+        }
+    }
+}
+void smart_move(struct Player *self, struct Scene *scene, float attack_radius, int role) {
+    if (scene->state == STATE_OUT || scene->state == STATE_RESTARTING) {
+        move_to_home(self);
+        return;
+    }
+    if (scene->ball->possessor == self) {
+        float target_x = (self->team == 1) ? PITCH_X + PITCH_W : PITCH_X;
+        float target_y = CENTER_Y;
+        float dx = target_x - self->position.x;
+        float dy = target_y - self->position.y;
+        float dist = sqrt(dx * dx + dy * dy);
+        
+        if (dist > 1.0f) {
+            self->velocity.x = (dx / dist) * self->talents.agility * 10.0f;
+            self->velocity.y = (dy / dist) * self->talents.agility * 10.0f;
+        }
+        return; 
+    }
+
+    float ball_x = scene->ball->position.x;
+    float ball_y = scene->ball->position.y;
+    float dx = ball_x - self->position.x;
+    float dy = ball_y - self->position.y;
+    float dist_to_ball = sqrt(dx * dx + dy * dy);
+    float center_line = PITCH_X + (PITCH_W / 2.0f);
+    bool should_chase = false;
+    bool teammate_has_ball = (scene->ball->possessor != NULL && scene->ball->possessor->team == self->team && scene->ball->possessor != self);
+    if (dist_to_ball < attack_radius && is_closest_teammate(self, scene) && !teammate_has_ball) {
+        should_chase = true;
+    }
+
+    if (role == 1) { 
+        bool ball_in_my_half = (self->team == 1) ? (ball_x < center_line) : (ball_x > center_line);
+        if (!ball_in_my_half) should_chase = false;
+    }
+    
+    if (role == 2 && dist_to_ball < 120.0f) { 
+        should_chase = true;
+    }
+    if (teammate_has_ball) {
+        should_chase = false;
+    }
+
+    if (should_chase) {
+        if (dist_to_ball > 0.1f) {
+            self->velocity.x = (dx / dist_to_ball) * self->talents.agility * 10;
+            self->velocity.y = (dy / dist_to_ball) * self->talents.agility * 10;
+        }
+        else {
+            self->velocity.x = 0; self->velocity.y = 0;
+        }
+    }
+    else {
+        struct Vec2 home = get_positions(self->team, self->kit);
+        float target_x, target_y;
+
+        if (role == 0) { 
+            float support_dist = (self->team == 1) ? -80.0f : 80.0f;
+            target_x = ball_x + support_dist;
+            if (self->team == 1 && target_x < home.x) target_x = home.x + (ball_x - home.x) * 0.4f;
+            if (self->team == 2 && target_x > home.x) target_x = home.x + (ball_x - home.x) * 0.4f;
+            target_y = (home.y * 0.5f) + (ball_y * 0.5f);
+        } 
+        else if (role == 2) { 
+            bool ball_in_opp_half = (self->team == 1) ? (ball_x > center_line) : (ball_x < center_line);
+            if (ball_in_opp_half) {
+                float base_run = (self->team == 1) ? 150.0f : -150.0f;
+                float x_offset = (self->team == 1) ? (home.x - (center_line - 150.0f)) : (home.x - (center_line + 150.0f));
+                target_x = ball_x + base_run + (x_offset * 0.8f);
+                if (self->team == 1 && target_x > PITCH_X + PITCH_W - 50) target_x = PITCH_X + PITCH_W - 50;
+                if (self->team == 2 && target_x < PITCH_X + 50) target_x = PITCH_X + 50;
+                float y_offset = home.y - CENTER_Y;
+                if (y_offset == 0.0f) target_y = ball_y + ((self->kit == 0) ? -60.0f : 60.0f); 
+                else target_y = ball_y + (y_offset * 0.6f); 
+            }
+            else {
+                target_x = home.x + (ball_x - home.x) * 0.3f;
+                if (self->team == 1 && target_x < center_line - 20) target_x = center_line - 20;
+                if (self->team == 2 && target_x > center_line + 20) target_x = center_line + 20;
+                target_y = (home.y * 0.7f) + (ball_y * 0.3f);
+            }
+        }
+        else if (role == 4) { 
+            if (self->team == 1) target_x = PITCH_X + (PITCH_W * 0.75f); 
+            else target_x = PITCH_X + (PITCH_W * 0.25f); 
+            target_y = (ball_y < CENTER_Y) ? ball_y + 20 : ball_y - 20; 
+            if (target_y < PITCH_Y + 50) target_y = PITCH_Y + 50;
+            if (target_y > PITCH_Y + PITCH_H - 50) target_y = PITCH_Y + PITCH_H - 50;
+        }
+        else { 
+            target_x = home.x;
+            bool ball_is_behind = (self->team == 1) ? (ball_x < home.x) : (ball_x > home.x);
+            if (ball_is_behind) target_x = ball_x; 
+            target_y = home.y + (ball_y - home.y) * 0.2f;
+            if (self->team == 1 && target_x > center_line - 60) target_x = center_line - 60;
+            if (self->team == 2 && target_x < center_line + 60) target_x = center_line + 60;
+        }
+
+        float h_dx = target_x - self->position.x;
+        float h_dy = target_y - self->position.y;
+        float h_dist = sqrt(h_dx * h_dx + h_dy * h_dy);
+
+        if (h_dist > 2.0f) {
+            self->velocity.x = (h_dx / h_dist) * self->talents.agility * 7;
+            self->velocity.y = (h_dy / h_dist) * self->talents.agility * 7;
+        } else {
+            self->velocity.x = 0; self->velocity.y = 0;
+        }
+    }
+}
+void smart_change_state(struct Player *self, struct Scene *scene) {
+    float dx = scene->ball->position.x - self->position.x;
+    float dy = scene->ball->position.y - self->position.y;
+    float distance = sqrt(dx*dx + dy*dy);
+
+    bool physically_has_ball = (scene->ball->possessor == self && distance < 35.0f);
+    bool teammate_has_ball = (scene->ball->possessor != NULL && scene->ball->possessor->team == self->team && scene->ball->possessor != self);
+    bool enemy_has_ball = (scene->ball->possessor != NULL && scene->ball->possessor->team != self->team);
+
+    if (scene->state == STATE_OUT || scene->state == STATE_RESTARTING) {
+        if (physically_has_ball) self->state = SHOOTING; 
+        else self->state = MOVING; 
+        return;
+    }
+
+    if (physically_has_ball) {
+        if (self->state == SHOOTING) self->state = MOVING; 
+        else self->state = SHOOTING;
+    }
+    else if (teammate_has_ball) {
+        self->state = MOVING;
+    }
+    else {
+        int is_near_sideline = (scene->ball->position.y < PITCH_Y + 15.0f || 
+                                scene->ball->position.y > PITCH_Y + PITCH_H - 15.0f ||
+                                scene->ball->position.x < PITCH_X + 15.0f || 
+                                scene->ball->position.x > PITCH_X + PITCH_W - 15.0f);
+
+        if (enemy_has_ball && is_near_sideline && distance < 70.0f) {
+            self->state = MOVING; 
+        }
+        else if (distance < 60.0f) {
+            self->state = INTERCEPTING;
+        }
+        else {
+            self->state = MOVING;
+        }
+    }
+}
 /* Team 1 movement logic */
-void movement_logic_1_0(struct Player *self, const struct Scene *scene) {
-    float dy = scene->ball->position.y - self->position.y;
-    self->velocity.x = 0;
-    if(fabs(dy) > 15){
-        self->velocity.y = dy/fabs(dy) * self->talents.agility * 10;
+void movement_logic_1_0(struct Player *self, struct Scene *scene) {
+    if (handle_out_and_restarts(self, scene)) {
+        return; 
     }
-    else{
-        self->velocity.y = 0;
-    }
+    smart_move(self, scene, 800.0f, 2);
 }
-void movement_logic_1_1(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    float target_x , target_y;
-    if(distance < 100){
-        if(distance > 5){
-            self->velocity.x = dx/distance * self->talents.agility * 10;
-            self->velocity.y = dy/distance * self->talents.agility * 10;
-        }
-        else{
-            self->velocity.x = 0;
-            self->velocity.y = 0;
-        }
+void movement_logic_1_1(struct Player *self, struct Scene *scene) {
+    if (handle_out_and_restarts(self, scene)) {
+        return; 
     }
-    else{
-        target_x = (scene->ball->position.x + PITCH_X) / 2;
-        target_y = scene->ball->position.y + 50;
-        float tdx = target_x - self->position.x;
-        float tdy = target_y - self->position.y;
-        float tdistance = sqrt(tdx*tdx + tdy*tdy);
-        if(tdistance>15){
-            self->velocity.x = tdx/tdistance * self->talents.agility * 10;
-            self->velocity.y = tdy/tdistance * self->talents.agility * 10;
-        }
-        else{
-            self->velocity.x = 0;
-            self->velocity.y = 0;
-        }
-    }
+    smart_move(self, scene, 300.0f, 1);
+    return;
 }
-void movement_logic_1_2(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    float target_x , target_y;
-    if(distance < 100){
-        if(distance > 15){
-            self->velocity.x = dx/distance * self->talents.agility * 10;
-            self->velocity.y = dy/distance * self->talents.agility * 10;
-        }
-        else{
-            self->velocity.x = 0;
-            self->velocity.y = 0;
-        }
+void movement_logic_1_2(struct Player *self, struct Scene *scene) {
+    if (handle_out_and_restarts(self, scene)) {
+        return; 
     }
-    else{
-        target_x = (scene->ball->position.x + PITCH_X) / 2;
-        target_y = scene->ball->position.y - 50;
-        float tdx = target_x - self->position.x;
-        float tdy = target_y - self->position.y;
-        float tdistance = sqrt(tdx*tdx + tdy*tdy);
-        if(tdistance>15){
-            self->velocity.x = tdx/tdistance * self->talents.agility * 10;
-            self->velocity.y = tdy/tdistance * self->talents.agility * 10;
-        }
-        else{
-            self->velocity.x = 0;
-            self->velocity.y = 0;
-        }
-    }
+    smart_move(self, scene, 300.0f, 1);
+    return;
 }
-void movement_logic_1_3(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(distance>15){
-        self->velocity.x = -(dx/distance) * self->talents.agility * 10;
-        self->velocity.y = (dy/distance) * self->talents.agility * 10;
+void movement_logic_1_3(struct Player *self, struct Scene *scene) {
+    if (handle_out_and_restarts(self, scene)) {
+        return; 
     }
-    else{
-        self->velocity.x = 0;
-        self->velocity.y = 0;
-    }
+    smart_move(self, scene, 600.0f, 0);
+    return;
 }
-void movement_logic_1_4(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    float target_x = CENTER_X + 50;
-    float target_y = CENTER_Y - 50;
-    float tdx = target_x - self->position.x;
-    float tdy = target_y - self->position.y;
-    float tdistance = sqrt(tdx*tdx + tdy*tdy);
-    if(distance>15){
-        if(scene->ball->position.x > CENTER_X){
-            self->velocity.x = tdx/tdistance * self->talents.agility * 10;
-            self->velocity.y = tdy/tdistance * self->talents.agility * 10;
-        }
-        else{
-            self->velocity.x = dx/distance * self->talents.agility * 10;
-            self->velocity.y = dy/distance * self->talents.agility * 10;
-        }
-    }
-    else{
-        self->velocity.x = 0;
-        self->velocity.y = 0;
-    }
+void movement_logic_1_4(struct Player *self, struct Scene *scene) {
+    smart_goalkeeper_move(self, scene);
 }
-void movement_logic_1_5(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    float target_x = CENTER_X + 50;
-    float target_y = CENTER_Y - 50;
-    float tdx = target_x - self->position.x;
-    float tdy = target_y - self->position.y;
-    float tdistance = sqrt(tdx*tdx + tdy*tdy);
-    if(distance>15){
-        if(scene->ball->position.x > CENTER_X){
-            self->velocity.x = tdx/tdistance * self->talents.agility * 10;
-            self->velocity.y = tdy/tdistance * self->talents.agility * 10;
-        }
-        else{
-            self->velocity.x = dx/distance * self->talents.agility * 10;
-            self->velocity.y = dy/distance * self->talents.agility * 10;
-        }
+void movement_logic_1_5(struct Player *self, struct Scene *scene) {
+    if (handle_out_and_restarts(self, scene)) {
+        return; 
     }
-    else{
-        self->velocity.x = 0;
-        self->velocity.y = 0;
-    }
+    smart_move(self, scene, 800.0f, 4);
 }
 
 /* Team 2 movement logic */
-void movement_logic_2_0(struct Player *self, const struct Scene *scene) {
-    float dy = scene->ball->position.y - self->position.y;
-    self->velocity.x = 0;
-    if(fabs(dy) > 15){
-        self->velocity.y = dy/fabs(dy) * self->talents.agility * 10;
+void movement_logic_2_0(struct Player *self, struct Scene *scene) {
+    if (handle_out_and_restarts(self, scene)) {
+        return; 
     }
-    else{
-        self->velocity.y = 0;
-    }
+    smart_move(self, scene, 800.0f, 2);
 }
-void movement_logic_2_1(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    float target_x , target_y;
-    if(distance < 100){
-        if(distance > 15){
-            self->velocity.x = dx/distance * self->talents.agility * 10;
-            self->velocity.y = dy/distance * self->talents.agility * 10;
-        }
-        else{
-            self->velocity.x = 0;
-            self->velocity.y = 0;
-        }
+void movement_logic_2_1(struct Player *self, struct Scene *scene) {
+    if (handle_out_and_restarts(self, scene)) {
+        return; 
     }
-    else{
-        target_x = (scene->ball->position.x + PITCH_X+PITCH_W) / 2;
-        target_y = scene->ball->position.y + 50;
-        float tdx = target_x - self->position.x;
-        float tdy = target_y - self->position.y;
-        float tdistance = sqrt(tdx*tdx + tdy*tdy);
-        if(tdistance>15){
-            self->velocity.x = tdx/tdistance * self->talents.agility * 10;
-            self->velocity.y = tdy/tdistance * self->talents.agility * 10;
-        }
-        else{
-            self->velocity.x = 0;
-            self->velocity.y = 0;
-        }
-    }
+    smart_move(self, scene, 300.0f, 1);
+    return;
 }
-void movement_logic_2_2(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    float target_x , target_y;
-    if(distance < 100){
-        if(distance >15){
-            self->velocity.x = dx/distance * self->talents.agility * 10;
-            self->velocity.y = dy/distance * self->talents.agility * 10;
-        }
-        else{
-            self->velocity.x = 0;
-            self->velocity.y = 0;
-        }
+void movement_logic_2_2(struct Player *self, struct Scene *scene) {
+    if (handle_out_and_restarts(self, scene)) {
+        return; 
     }
-    else{
-        target_x = (scene->ball->position.x + PITCH_X + PITCH_W) / 2;
-        target_y = scene->ball->position.y - 50;
-        float tdx = target_x - self->position.x;
-        float tdy = target_y - self->position.y;
-        float tdistance = sqrt(tdx*tdx + tdy*tdy);
-        if(tdistance>15){
-            self->velocity.x = tdx/tdistance * self->talents.agility * 10;
-            self->velocity.y = tdy/tdistance * self->talents.agility * 10;
-        }
-        else{
-            self->velocity.x = 0;
-            self->velocity.y = 0;
-        }
-    }
+    smart_move(self, scene, 300.0f, 1);
+    return;
 }
-void movement_logic_2_3(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(distance>15){
-        self->velocity.x = (dx/distance) * self->talents.agility * 10;
-        self->velocity.y = (dy/distance) * self->talents.agility * 10;
+void movement_logic_2_3(struct Player *self, struct Scene *scene) {
+    if (handle_out_and_restarts(self, scene)) {
+        return; 
     }
-    else{
-        self->velocity.x = 0;
-        self->velocity.y = 0;
-    }
+    smart_move(self, scene, 600.0f, 0);
+    return;
 }
-void movement_logic_2_4(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    float target_x = CENTER_X - 50;
-    float target_y = CENTER_Y - 50;
-    float tdx = target_x - self->position.x;
-    float tdy = target_y - self->position.y;
-    float tdistance = sqrt(tdx*tdx + tdy*tdy);
-    if(distance>15){
-        if(scene->ball->position.x < CENTER_X){
-            self->velocity.x = tdx/tdistance * self->talents.agility * 10;
-            self->velocity.y = tdy/tdistance * self->talents.agility * 10;
-        }
-        else{
-            self->velocity.x = dx/distance * self->talents.agility * 10;
-            self->velocity.y = dy/distance * self->talents.agility * 10;
-        }
-    }
-    else{
-        self->velocity.x = 0;
-        self->velocity.y = 0;
-    }
+void movement_logic_2_4(struct Player *self, struct Scene *scene) {
+    smart_goalkeeper_move(self, scene);
 }
-void movement_logic_2_5(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    float target_x = CENTER_X - 50;
-    float target_y = CENTER_Y + 50;
-    float tdx = target_x - self->position.x;
-    float tdy = target_y - self->position.y;
-    float tdistance = sqrt(tdx*tdx + tdy*tdy);
-    if(distance>15){
-        if(scene->ball->position.x < CENTER_X){
-            self->velocity.x = tdx/tdistance * self->talents.agility * 10;
-            self->velocity.y = tdy/tdistance * self->talents.agility * 10;
-        }
-        else{
-            self->velocity.x = dx/distance * self->talents.agility * 10;
-            self->velocity.y = dy/distance * self->talents.agility * 10;
-        }
+void movement_logic_2_5(struct Player *self, struct Scene *scene) {
+    if (handle_out_and_restarts(self, scene)) {
+        return; 
     }
-    else{
-        self->velocity.x = 0;
-        self->velocity.y = 0;
-    }
+    smart_move(self, scene, 800.0f, 4);
+    return;
 }
 
 /* Team 1 shooting logic */
-void shooting_logic_1_0(struct Player *self, const struct Scene *scene) {
-    int flag = 0;
-    struct Player *best_teammate = NULL;
-    float best_distance = 800;
-    for(int i = 0; i<PLAYER_COUNT; i++){
-        struct Player *teammate = scene->first_team->players[i];
-        if(teammate == self) continue;
-        if(teammate->position.x > self->position.x){
-            float dx = teammate->position.x - scene->ball->position.x;
-            float dy = teammate->position.y - scene->ball->position.y;
-            float distance = sqrt(dx*dx + dy*dy);
-            if(distance<best_distance){
-                best_distance = distance;
-                best_teammate = teammate;
-                flag = 1;
-            }
-        }
-    }
-    if(flag){
-        float best_x = best_teammate->position.x - scene->ball->position.x;
-        float best_y = best_teammate->position.y - scene->ball->position.y;
-        scene->ball->velocity.x = best_x/best_distance * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/best_distance * self->talents.shooting * 15;
-    }
-    else{
-        float best_x = PITCH_X + PITCH_W - scene->ball->position.x;
-        float best_y = CENTER_Y - scene->ball->position.y;
-        float d = sqrt(best_x*best_x + best_y*best_y);
-        scene->ball->velocity.x = best_x/d * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/d * self->talents.shooting * 15;
-    }
+void shooting_logic_1_0(struct Player *self, struct Scene *scene) {
+    smart_shoot(self, scene,0);
 }
-void shooting_logic_1_1(struct Player *self, const struct Scene *scene) {
-        int flag = 0;
-    struct Player *best_teammate = NULL;
-    float best_distance = 800;
-    for(int i = 0; i<PLAYER_COUNT; i++){
-        struct Player *teammate = scene->first_team->players[i];
-        if(teammate == self) continue;
-        if(teammate->position.x > self->position.x){
-            float dx = teammate->position.x - scene->ball->position.x;
-            float dy = teammate->position.y - scene->ball->position.y;
-            float distance = sqrt(dx*dx + dy*dy);
-            if(distance<best_distance){
-                best_distance = distance;
-                best_teammate = teammate;
-                flag = 1;
-            }
-        }
-    }
-    if(flag){
-        float best_x = best_teammate->position.x - scene->ball->position.x;
-        float best_y = best_teammate->position.y - scene->ball->position.y;
-        scene->ball->velocity.x = best_x/best_distance * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/best_distance * self->talents.shooting * 15;
-    }
-    else{
-        float best_x = PITCH_X + PITCH_W - scene->ball->position.x;
-        float best_y = CENTER_Y - scene->ball->position.y;
-        float d = sqrt(best_x*best_x + best_y*best_y);
-        scene->ball->velocity.x = best_x/d * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/d * self->talents.shooting * 15;
-    }
+void shooting_logic_1_1(struct Player *self, struct Scene *scene) {
+    smart_shoot(self, scene,0);
 }
-void shooting_logic_1_2(struct Player *self, const struct Scene *scene) {
-    int flag = 0;
-    struct Player *best_teammate = NULL;
-    float best_distance = 800;
-    for(int i = 0; i<PLAYER_COUNT; i++){
-        struct Player *teammate = scene->first_team->players[i];
-        if(teammate == self) continue;
-        if(teammate->position.x > self->position.x){
-            float dx = teammate->position.x - scene->ball->position.x;
-            float dy = teammate->position.y - scene->ball->position.y;
-            float distance = sqrt(dx*dx + dy*dy);
-            if(distance<best_distance){
-                best_distance = distance;
-                best_teammate = teammate;
-                flag = 1;
-            }
-        }
-    }
-    if(flag){
-        float best_x = best_teammate->position.x - scene->ball->position.x;
-        float best_y = best_teammate->position.y - scene->ball->position.y;
-        scene->ball->velocity.x = best_x/best_distance * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/best_distance * self->talents.shooting * 15;
-    }
-    else{
-        float best_x = PITCH_X + PITCH_W - scene->ball->position.x;
-        float best_y = CENTER_Y - scene->ball->position.y;
-        float d = sqrt(best_x*best_x + best_y*best_y);
-        scene->ball->velocity.x = best_x/d * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/d * self->talents.shooting * 15;
-    }
+void shooting_logic_1_2(struct Player *self, struct Scene *scene) {
+    smart_shoot(self, scene, 0);
 }
-void shooting_logic_1_3(struct Player *self, const struct Scene *scene) {
-    int flag = 0;
-    struct Player *best_teammate = NULL;
-    float best_distance = 800;
-    for(int i = 0; i<PLAYER_COUNT; i++){
-        struct Player *teammate = scene->first_team->players[i];
-        if(teammate == self) continue;
-        if(teammate->position.x > self->position.x){
-            float dx = teammate->position.x - scene->ball->position.x;
-            float dy = teammate->position.y - scene->ball->position.y;
-            float distance = sqrt(dx*dx + dy*dy);
-            if(distance<best_distance){
-                best_distance = distance;
-                best_teammate = teammate;
-                flag = 1;
-            }
-        }
-    }
-    if(flag){
-        float best_x = best_teammate->position.x - scene->ball->position.x;
-        float best_y = best_teammate->position.y - scene->ball->position.y;
-        scene->ball->velocity.x = best_x/best_distance * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/best_distance * self->talents.shooting * 15;
-    }
-    else{
-        float best_x = PITCH_X + PITCH_W - scene->ball->position.x;
-        float best_y = CENTER_Y - scene->ball->position.y;
-        float d = sqrt(best_x*best_x + best_y*best_y);
-        scene->ball->velocity.x = best_x/d * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/d * self->talents.shooting * 15;
-    }
+void shooting_logic_1_3(struct Player *self, struct Scene *scene) {
+    smart_shoot(self, scene,0);
 }
-void shooting_logic_1_4(struct Player *self, const struct Scene *scene) {
-    int flag = 0;
-    struct Player *best_teammate = NULL;
-    float best_distance = 800;
-    for(int i = 0; i<PLAYER_COUNT; i++){
-        struct Player *teammate = scene->first_team->players[i];
-        if(teammate == self) continue;
-        if(teammate->position.x > self->position.x){
-            float dx = teammate->position.x - scene->ball->position.x;
-            float dy = teammate->position.y - scene->ball->position.y;
-            float distance = sqrt(dx*dx + dy*dy);
-            if(distance<best_distance){
-                best_distance = distance;
-                best_teammate = teammate;
-                flag = 1;
-            }
-        }
-    }
-    if(flag){
-        float best_x = best_teammate->position.x - scene->ball->position.x;
-        float best_y = best_teammate->position.y - scene->ball->position.y;
-        scene->ball->velocity.x = best_x/best_distance * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/best_distance * self->talents.shooting * 15;
-    }
-    else{
-        float best_x = PITCH_X + PITCH_W - scene->ball->position.x;
-        float best_y = CENTER_Y - scene->ball->position.y;
-        float d = sqrt(best_x*best_x + best_y*best_y);
-        scene->ball->velocity.x = best_x/d * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/d * self->talents.shooting * 15;
-    }
+void shooting_logic_1_4(struct Player *self, struct Scene *scene) {
+    smart_shoot(self, scene,3);
 }
-void shooting_logic_1_5(struct Player *self, const struct Scene *scene) {
-    int flag = 0;
-    struct Player *best_teammate = NULL;
-    float best_distance = 800;
-    for(int i = 0; i<PLAYER_COUNT; i++){
-        struct Player *teammate = scene->first_team->players[i];
-        if(teammate == self) continue;
-        if(teammate->position.x > self->position.x){
-            float dx = teammate->position.x - scene->ball->position.x;
-            float dy = teammate->position.y - scene->ball->position.y;
-            float distance = sqrt(dx*dx + dy*dy);
-            if(distance<best_distance){
-                best_distance = distance;
-                best_teammate = teammate;
-                flag = 1;
-            }
-        }
-    }
-    if(flag){
-        float best_x = best_teammate->position.x - scene->ball->position.x;
-        float best_y = best_teammate->position.y - scene->ball->position.y;
-        scene->ball->velocity.x = best_x/best_distance * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/best_distance * self->talents.shooting * 15;
-    }
-    else{
-        float best_x = PITCH_X + PITCH_W - scene->ball->position.x;
-        float best_y = CENTER_Y - scene->ball->position.y;
-        float d = sqrt(best_x*best_x + best_y*best_y);
-        scene->ball->velocity.x = best_x/d * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/d * self->talents.shooting * 15;
-    }
+void shooting_logic_1_5(struct Player *self, struct Scene *scene) {
+    smart_shoot(self, scene,0);
 }
 
 /* Team 2 shooting logic */
-void shooting_logic_2_0(struct Player *self, const struct Scene *scene) {
-    int flag = 0;
-    struct Player *best_teammate = NULL;
-    float best_distance = 800;
-    for(int i = 0; i<PLAYER_COUNT; i++){
-        struct Player *teammate = scene->second_team->players[i];
-        if(teammate == self) continue;
-        if(teammate->position.x < self->position.x){
-            float dx = teammate->position.x - scene->ball->position.x;
-            float dy = teammate->position.y - scene->ball->position.y;
-            float distance = sqrt(dx*dx + dy*dy);
-            if(distance<best_distance){
-                best_distance = distance;
-                best_teammate = teammate;
-                flag = 1;
-            }
-        }
-    }
-    if(flag){
-        float best_x = best_teammate->position.x - scene->ball->position.x;
-        float best_y = best_teammate->position.y - scene->ball->position.y;
-        scene->ball->velocity.x = best_x/best_distance * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/best_distance * self->talents.shooting * 15;
-    }
-    else{
-        float best_x = PITCH_X - scene->ball->position.x;
-        float best_y = CENTER_Y - scene->ball->position.y;
-        float d = sqrt(best_x*best_x + best_y*best_y);
-        scene->ball->velocity.x = best_x/d * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/d * self->talents.shooting * 15;
-    }
-
+void shooting_logic_2_0(struct Player *self, struct Scene *scene) {
+    smart_shoot(self, scene,0);
 }
-void shooting_logic_2_1(struct Player *self, const struct Scene *scene) {
-    int flag = 0;
-    struct Player *best_teammate = NULL;
-    float best_distance = 800;
-    for(int i = 0; i<PLAYER_COUNT; i++){
-        struct Player *teammate = scene->second_team->players[i];
-        if(teammate == self) continue;
-        if(teammate->position.x < self->position.x){
-            float dx = teammate->position.x - scene->ball->position.x;
-            float dy = teammate->position.y - scene->ball->position.y;
-            float distance = sqrt(dx*dx + dy*dy);
-            if(distance<best_distance){
-                best_distance = distance;
-                best_teammate = teammate;
-                flag = 1;
-            }
-        }
-    }
-    if(flag){
-        float best_x = best_teammate->position.x - scene->ball->position.x;
-        float best_y = best_teammate->position.y - scene->ball->position.y;
-        scene->ball->velocity.x = best_x/best_distance * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/best_distance * self->talents.shooting * 15;
-    }
-    else{
-        float best_x = PITCH_X - scene->ball->position.x;
-        float best_y = CENTER_Y - scene->ball->position.y;
-        float d = sqrt(best_x*best_x + best_y*best_y);
-        scene->ball->velocity.x = best_x/d * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/d * self->talents.shooting * 15;
-    }
-
+void shooting_logic_2_1(struct Player *self, struct Scene *scene) {
+    smart_shoot(self, scene,0);
 }
-void shooting_logic_2_2(struct Player *self, const struct Scene *scene) {
-    int flag = 0;
-    struct Player *best_teammate = NULL;
-    float best_distance = 800;
-    for(int i = 0; i<PLAYER_COUNT; i++){
-        struct Player *teammate = scene->second_team->players[i];
-        if(teammate == self) continue;
-        if(teammate->position.x < self->position.x){
-            float dx = teammate->position.x - scene->ball->position.x;
-            float dy = teammate->position.y - scene->ball->position.y;
-            float distance = sqrt(dx*dx + dy*dy);
-            if(distance<best_distance){
-                best_distance = distance;
-                best_teammate = teammate;
-                flag = 1;
-            }
-        }
-    }
-    if(flag){
-        float best_x = best_teammate->position.x - scene->ball->position.x;
-        float best_y = best_teammate->position.y - scene->ball->position.y;
-        scene->ball->velocity.x = best_x/best_distance * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/best_distance * self->talents.shooting * 15;
-    }
-    else{
-        float best_x = PITCH_X - scene->ball->position.x;
-        float best_y = CENTER_Y - scene->ball->position.y;
-        float d = sqrt(best_x*best_x + best_y*best_y);
-        scene->ball->velocity.x = best_x/d * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/d * self->talents.shooting * 15;
-    }
-
+void shooting_logic_2_2(struct Player *self, struct Scene *scene) {
+    smart_shoot(self, scene,0);
 }
-void shooting_logic_2_3(struct Player *self, const struct Scene *scene) {
-    int flag = 0;
-    struct Player *best_teammate = NULL;
-    float best_distance = 800;
-    for(int i = 0; i<PLAYER_COUNT; i++){
-        struct Player *teammate = scene->second_team->players[i];
-        if(teammate == self) continue;
-        if(teammate->position.x < self->position.x){
-            float dx = teammate->position.x - scene->ball->position.x;
-            float dy = teammate->position.y - scene->ball->position.y;
-            float distance = sqrt(dx*dx + dy*dy);
-            if(distance<best_distance){
-                best_distance = distance;
-                best_teammate = teammate;
-                flag = 1;
-            }
-        }
-    }
-    if(flag){
-        float best_x = best_teammate->position.x - scene->ball->position.x;
-        float best_y = best_teammate->position.y - scene->ball->position.y;
-        scene->ball->velocity.x = best_x/best_distance * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/best_distance * self->talents.shooting * 15;
-    }
-    else{
-        float best_x = PITCH_X - scene->ball->position.x;
-        float best_y = CENTER_Y - scene->ball->position.y;
-        float d = sqrt(best_x*best_x + best_y*best_y);
-        scene->ball->velocity.x = best_x/d * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/d * self->talents.shooting * 15;
-    }
-
+void shooting_logic_2_3(struct Player *self, struct Scene *scene) {
+    smart_shoot(self, scene,0);
 }
-void shooting_logic_2_4(struct Player *self, const struct Scene *scene) {
-    int flag = 0;
-    struct Player *best_teammate = NULL;
-    float best_distance = 800;
-    for(int i = 0; i<PLAYER_COUNT; i++){
-        struct Player *teammate = scene->second_team->players[i];
-        if(teammate == self) continue;
-        if(teammate->position.x < self->position.x){
-            float dx = teammate->position.x - scene->ball->position.x;
-            float dy = teammate->position.y - scene->ball->position.y;
-            float distance = sqrt(dx*dx + dy*dy);
-            if(distance<best_distance){
-                best_distance = distance;
-                best_teammate = teammate;
-                flag = 1;
-            }
-        }
-    }
-    if(flag){
-        float best_x = best_teammate->position.x - scene->ball->position.x;
-        float best_y = best_teammate->position.y - scene->ball->position.y;
-        scene->ball->velocity.x = best_x/best_distance * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/best_distance * self->talents.shooting * 15;
-    }
-    else{
-        float best_x = PITCH_X - scene->ball->position.x;
-        float best_y = CENTER_Y - scene->ball->position.y;
-        float d = sqrt(best_x*best_x + best_y*best_y);
-        scene->ball->velocity.x = best_x/d * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/d * self->talents.shooting * 15;
-    }
-
+void shooting_logic_2_4(struct Player *self, struct Scene *scene) {
+    smart_shoot(self, scene, 3);
 }
-void shooting_logic_2_5(struct Player *self, const struct Scene *scene) {
-    int flag = 0;
-    struct Player *best_teammate = NULL;
-    float best_distance = 800;
-    for(int i = 0; i<PLAYER_COUNT; i++){
-        struct Player *teammate = scene->second_team->players[i];
-        if(teammate == self) continue;
-        if(teammate->position.x < self->position.x){
-            float dx = teammate->position.x - scene->ball->position.x;
-            float dy = teammate->position.y - scene->ball->position.y;
-            float distance = sqrt(dx*dx + dy*dy);
-            if(distance<best_distance){
-                best_distance = distance;
-                best_teammate = teammate;
-                flag = 1;
-            }
-        }
-    }
-    if(flag){
-        float best_x = best_teammate->position.x - scene->ball->position.x;
-        float best_y = best_teammate->position.y - scene->ball->position.y;
-        scene->ball->velocity.x = best_x/best_distance * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/best_distance * self->talents.shooting * 15;
-    }
-    else{
-        float best_x = PITCH_X - scene->ball->position.x;
-        float best_y = CENTER_Y - scene->ball->position.y;
-        float d = sqrt(best_x*best_x + best_y*best_y);
-        scene->ball->velocity.x = best_x/d * self->talents.shooting * 15;
-        scene->ball->velocity.y = best_y/d * self->talents.shooting * 15;
-    }
+void shooting_logic_2_5(struct Player *self, struct Scene *scene) {
+    smart_shoot(self, scene,0);
 }
 
 /* Team 1 change_state logic */
-void change_state_logic_1_0(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(scene->ball->possessor == self){
-        self->state = SHOOTING;
-    }
-    else if(distance<15){
-        self->state = INTERCEPTING;
-    }
-    else{
-        self->state = MOVING;
-    }
+void change_state_logic_1_0(struct Player *self, struct Scene *scene) {
+    smart_change_state(self, scene);
 }
-void change_state_logic_1_1(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(scene->ball->possessor == self){
-        self->state = SHOOTING;
-    }
-    else if(distance<15){
-        self->state = INTERCEPTING;
-    }
-    else{
-        self->state = MOVING;
-    }
+void change_state_logic_1_1(struct Player *self, struct Scene *scene) {
+    smart_change_state(self, scene);
 }
-void change_state_logic_1_2(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(scene->ball->possessor == self){
-        self->state = SHOOTING;
-    }
-    else if(distance<15){
-        self->state = INTERCEPTING;
-    }
-    else{
-        self->state = MOVING;
-    }
+void change_state_logic_1_2(struct Player *self, struct Scene *scene) {
+    smart_change_state(self, scene);
 }
-void change_state_logic_1_3(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(scene->ball->possessor == self){
-        self->state = SHOOTING;
-    }
-    else if(distance<15){
-        self->state = INTERCEPTING;
-    }
-    else{
-        self->state = MOVING;
-    }
+void change_state_logic_1_3(struct Player *self, struct Scene *scene) {
+    smart_change_state(self, scene);
 }
-void change_state_logic_1_4(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(scene->ball->possessor == self){
-        self->state = SHOOTING;
-    }
-    else if(distance<15){
-        self->state = INTERCEPTING;
-    }
-    else{
-        self->state = MOVING;
-    }
+void change_state_logic_1_4(struct Player *self, struct Scene *scene) {
+    smart_change_state(self, scene);
 }
-void change_state_logic_1_5(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(scene->ball->possessor == self){
-        self->state = SHOOTING;
-    }
-    else if(distance<15){
-        self->state = INTERCEPTING;
-    }
-    else{
-        self->state = MOVING;
-    }
+void change_state_logic_1_5(struct Player *self, struct Scene *scene) {
+    smart_change_state(self, scene);
 }
 
 /* Team 2 change_state logic */
-void change_state_logic_2_0(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(scene->ball->possessor == self){
-        self->state = SHOOTING;
-    }
-    else if(distance<15){
-        self->state = INTERCEPTING;
-    }
-    else{
-        self->state = MOVING;
-    }
+void change_state_logic_2_0(struct Player *self, struct Scene *scene) {
+    smart_change_state(self, scene);
 }
-void change_state_logic_2_1(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(scene->ball->possessor == self){
-        self->state = SHOOTING;
-    }
-    else if(distance<15){
-        self->state = INTERCEPTING;
-    }
-    else{
-        self->state = MOVING;
-    }
+void change_state_logic_2_1(struct Player *self, struct Scene *scene) {
+    smart_change_state(self, scene);
 }
-void change_state_logic_2_2(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(scene->ball->possessor == self){
-        self->state = SHOOTING;
-    }
-    else if(distance<15){
-        self->state = INTERCEPTING;
-    }
-    else{
-        self->state = MOVING;
-    }
+void change_state_logic_2_2(struct Player *self, struct Scene *scene) {
+    smart_change_state(self, scene);
 }
-void change_state_logic_2_3(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(scene->ball->possessor == self){
-        self->state = SHOOTING;
-    }
-    else if(distance<15){
-        self->state = INTERCEPTING;
-    }
-    else{
-        self->state = MOVING;
-    }
+void change_state_logic_2_3(struct Player *self, struct Scene *scene) {
+    smart_change_state(self, scene);
 }
-void change_state_logic_2_4(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(scene->ball->possessor == self){
-        self->state = SHOOTING;
-    }
-    else if(distance<15){
-        self->state = INTERCEPTING;
-    }
-    else{
-        self->state = MOVING;
-    }
+void change_state_logic_2_4(struct Player *self, struct Scene *scene) {
+    smart_change_state(self, scene);
 }
-void change_state_logic_2_5(struct Player *self, const struct Scene *scene) {
-    float dx = scene->ball->position.x - self->position.x;
-    float dy = scene->ball->position.y - self->position.y;
-    float distance = sqrt(dx*dx + dy*dy);
-    if(scene->ball->possessor == self){
-        self->state = SHOOTING;
-    }
-    else if(distance<15){
-        self->state = INTERCEPTING;
-    }
-    else{
-        self->state = MOVING;
-    }
+void change_state_logic_2_5(struct Player *self, struct Scene *scene) {
+    smart_change_state(self, scene);
 }
 
 /* -------------------------------------------------------------------------
@@ -931,22 +578,22 @@ PlayerLogicFn get_change_state_logic(int team, int kit) {
  * ------------------------------------------------------------------------- */
 /* Team 1 */
 static struct Talents team1_talents[6] = {
-    {10, 3, 1, 1},
-    {9, 6, 2, 1},
+    {5, 7, 2, 6},
+    {6, 5, 5, 4},
     {5, 5, 5, 5},
     {5, 5, 5, 5},
-    {3, 3, 8, 6},
-    {1, 3, 7, 8},
+    {6, 7, 1, 6},
+    {1, 6, 5, 8},
 };
 
 /* Team 2 */
 static struct Talents team2_talents[6] = {
-    {9, 6, 1, 1},
-    {8, 7, 4, 1},
+    {5, 7, 2, 6},
+    {6, 6, 4, 4},
     {5, 5, 5, 5},
     {5, 5, 5, 5},
-    {1, 1, 6, 6},
-    {1, 1, 9, 9},
+    {6, 7, 1, 6},
+    {1, 6, 4, 9},
 };
 
 struct Talents get_talents(int team, int kit) {
@@ -964,22 +611,22 @@ struct Talents get_talents(int team, int kit) {
  * ------------------------------------------------------------------------- */
 /* Team 1 */
 static struct Vec2 team1_positions[6] = {
-    {PITCH_X+40, CENTER_Y},
-    {250, CENTER_Y-150},
-    {200, CENTER_Y-75},
-    {150, CENTER_Y},
-    {200, CENTER_Y+75},
-    {250, CENTER_Y+150},
+    {CENTER_X - 150, CENTER_Y -150},
+    {CENTER_X - 300, CENTER_Y-150},
+    {CENTER_X -300 , CENTER_Y+150},
+    {CENTER_X -200, CENTER_Y},
+    {PITCH_X + 30, CENTER_Y},
+    {CENTER_X - 150, CENTER_Y+150},
 };
 
 /* Team 2 */
 static struct Vec2 team2_positions[6] = {
-    {PITCH_W+PITCH_X-40, CENTER_Y},
-    {800, CENTER_Y-150},
-    {850, CENTER_Y-75},
-    {900, CENTER_Y},
-    {850, CENTER_Y+75},
-    {800, CENTER_Y+150},
+    {CENTER_X + 150, CENTER_Y - 150},  
+    {CENTER_X + 300, CENTER_Y - 150},  
+    {CENTER_X + 300, CENTER_Y + 150},  
+    {CENTER_X + 200, CENTER_Y},        
+    {PITCH_X + PITCH_W - 30, CENTER_Y},
+    {CENTER_X + 150, CENTER_Y + 150},
 };
 
 struct Vec2 get_positions(int team, int kit) {

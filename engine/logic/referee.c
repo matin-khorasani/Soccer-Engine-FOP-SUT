@@ -207,7 +207,7 @@ void verify_shoot(struct Ball *ball, bool kickoff) {
 
     // TODO 7: implement this function
         // You must check for and print these EXACT errors:
-        float max_ball_speed = ball->possessor->talents.shooting * 15;
+        float max_ball_speed = ball->possessor->talents.shooting * 35;
         if(ball->velocity.x > max_ball_speed){
             printf(" ERROR: Demanding to shoot too fast in dimension x! (team %d, player %d)\n", ball->possessor->team, ball->possessor->kit);
             ball->velocity.x = max_ball_speed;
@@ -227,11 +227,11 @@ void verify_shoot(struct Ball *ball, bool kickoff) {
         if(kickoff == true){
             if((ball->possessor->team == 1)&&(ball->velocity.x > 0)){
                 printf(" ERROR: You must pass to your own half! (team %d, player %d)\n", ball->possessor->team, ball->possessor->kit);
-                ball->velocity.x = 0;
+                ball->velocity.x = -ball->velocity.x;
             }
             if((ball->possessor->team == 2)&&(ball->velocity.x < 0)){
                 printf(" ERROR: You must pass to your own half! (team %d, player %d)\n", ball->possessor->team, ball->possessor->kit);
-                ball->velocity.x = 0;
+                ball->velocity.x = -ball->velocity.x;
             }
         }
 
