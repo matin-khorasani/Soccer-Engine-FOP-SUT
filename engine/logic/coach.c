@@ -107,7 +107,7 @@ void smart_goalkeeper_move(struct Player *self, struct Scene *scene) {
     float dx = ball_x - self->position.x;
     float dy = ball_y - self->position.y;
     float dist = sqrt(dx*dx + dy*dy);
-    if (dist < 80.0f) {
+    if (dist < 65.0f) {
         target_x = ball_x;
         target_y = ball_y;
     }
@@ -133,7 +133,7 @@ void smart_shoot(struct Player *self, struct Scene *scene, int role) {
 
     if (role == 3) {
         float target_x = CENTER_X; 
-        float target_y = (scene->ball->position.y > CENTER_Y) ? (PITCH_Y - 50.0f) : (PITCH_Y + PITCH_H + 50.0f);
+        float target_y = (scene->ball->position.y > CENTER_Y) ? (PITCH_Y - 90.0f) : (PITCH_Y + PITCH_H + 90.0f);
         float dx = target_x - scene->ball->position.x;
         float dy = target_y - scene->ball->position.y;
         float d = sqrt(dx*dx + dy*dy);
